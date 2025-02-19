@@ -1,0 +1,88 @@
+#!/bin/python3
+
+#
+# Copyright 2025 M G Berberich
+#
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
+"""imgdupes: command to find similar images indirectory-trees"""
+
+__author__      = "M G Berberich"
+__copyright__   = "Copyright 2025"
+
+import sys
+import os
+import subprocess
+import numpy as np
+import cv2
+
+def img_compare(a, b):
+    v_sq = np.sqrt(np.sum(np.square(a.astype(np.int32)-b.astype(np.int32)).mean()))
+    if v_sq <= 10:
+        return True
+    else:
+        return False
+
+def img_find(list, img):
+    index = 0
+    for i in list:
+        if img_compare(i[0], img):
+            return index
+        index += 1
+    return None
+
+trees = sys.argv[1:]
+
+files = []
+for t in trees:
+    for c_dir, _, c_files in os.walk(t):
+        c_paths = [ f"{c_dir}/{i}" for i in c_files ]
+        files.extend(c_paths)
+
+total = len(files)
+print(f"{total} files", file=sys.stderr)
+
+scaled = []
+processed = 0
+doubles = 0
+for f in files:
+    processed += 1
+    try: 
+        img = cv2.imread(f)
+        img = cv2.resize(img, (20, 20))
+    except cv2.error as err:
+        #print(f"cv error: {f}", file=sys.stderr)
+        continue
+    idx = img_find(scaled, img)
+    if idx is None:
+        scaled.append((img, [f]))
+    else:
+        doubles += 1
+        scaled[idx][1].append(f)
+    print(f"{processed} of {total}, possible doubles {doubles}    \r",
+          end="", file=sys.stderr)
+    
+doubles = []
+for i in scaled:
+    if len(i[1]) > 1:
+        doubles.append(i[1])
+scaled = None
+
+for i in doubles:
+    print("\n".join(i))
+    print()
+    
+exit(0)

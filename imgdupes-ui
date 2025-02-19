@@ -1,0 +1,189 @@
+#!/usr/bin/python3
+
+#
+# Copyright 2025 M G Berberich
+#
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+
+"""imgdupes-ui: Qt-Gui to view (and delete) doubles found by imgdupes"""
+
+__author__      = "M G Berberich"
+__copyright__   = "Copyright 2025"
+
+import sys
+import os
+import subprocess
+import cv2
+
+from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5.QtCore import QSize, QMimeData, pyqtSlot
+from PyQt5.QtGui import QImage, QPixmap, QIcon, QStandardItem, QStandardItemModel
+import mainwindow
+
+#
+# item for the ImageList
+#
+class ImageListItem(QStandardItem):
+    imagelist = []
+    def __init__(self, icon, files):
+        QStandardItem.__init__(self, icon, None)
+        self.imagelist = files
+
+#
+# model for the imageview (drag+drop)
+#
+class ImageViewModel(QStandardItemModel):
+    def __init__(self):
+        QStandardItemModel.__init__(self)
+
+    # def flags(self, idx):
+    #     print("ImageViewModel call FLAGS")
+    #     flags = QStandardItemModel.flags(self, idx)
+    #     if idx.isValid():
+    #         print(int(flags))
+    #         print(int(QtCore.Qt.ItemIsDragEnabled))
+    #         print(int(QtCore.Qt.ItemIsDragEnabled | flags))
+    #         print(QtCore.Qt.ItemIsDragEnabled | int(flags))
+    #         return QtCore.Qt.ItemIsDragEnabled | int(flags)
+    #     else:
+    #         return flags
+
+    def mimeTypes(self):
+        return [ "text/plain" ]
+
+    def mimeData(self, idx):
+        view_item = self.itemFromIndex(idx[0])
+        file = view_item.text().split("\n")[0]
+        mime_data = QMimeData()
+        mime_data.setText(file)
+        return mime_data
+
+# read list of double images from file
+def read_list(file):
+    imglist = []
+    tmp = []
+    for l in file:
+        l = l.strip()
+        if l == "":
+            imglist.append(tmp)
+            tmp = []
+        else:
+            tmp.append(l)
+    return imglist
+
+# fill up the image list
+def fill_list(model, imglist, h):
+    for e in imglist:
+        i = cv2.imread(e[0])
+        if i is None:
+            print("file", e[0], "does not exist!", file=sys.stderr)
+            continue
+        y, x, _ = i.shape
+        w = int(x/y*h)
+        i = cv2.resize(i, (w, h))
+        qimage = QImage(i.data, w, h, w*3, QImage.Format.Format_BGR888)
+        icon = QIcon(QPixmap(qimage))
+        item = ImageListItem(icon, e)
+        model.appendRow(item)
+
+# set up the view list
+def set_view(model, images, h):
+    for e in images:
+        i = cv2.imread(e)
+        if i is None:
+            print("file", e, "does not exist!", file=sys.stderr)
+            continue
+        y, x, _ = i.shape
+        w = int(x/y*h)
+        i = cv2.resize(i, (w, h))
+        qimage = QImage(i.data, w, h, w*3, QImage.Format.Format_BGR888)
+        icon = QIcon(QPixmap(qimage))
+        bytes = os.path.getsize(e)
+        item = QStandardItem(icon, f"{e}\n{x}×{y}\n{bytes/1024:.1f} KiBytes")
+        model.appendRow(item)
+
+    
+@pyqtSlot()
+def list_activated(idx):
+    item = list_model.itemFromIndex(idx)
+    view_model.clear()
+    set_view(view_model, item.imagelist, view_height)
+
+@pyqtSlot()
+def view_contextmenu(pos):
+    print("ContextMenu")
+    pos_abs = ui.imageview.mapToGlobal(pos)
+    menu = QtWidgets.QMenu()
+    delete_action = menu.addAction("delete this image")
+    r = menu.exec(pos_abs)
+    if (r == delete_action):
+        list_idx = ui.imagelist.currentIndex()
+        list_item = list_model.itemFromIndex(list_idx)
+        if len(list_item.imagelist) <=1:
+            print("not deleting, only one left")
+            return
+        
+        view_idx = ui.imageview.currentIndex()
+        view_item = view_model.itemFromIndex(view_idx)
+        file = view_item.text().split("\n")[0]
+        os.remove(file)
+        
+        list_item.imagelist.remove(file)
+        print("deleted:", file)
+        list_activated(list_idx)
+ 
+@pyqtSlot()
+def view_aktion(idx):
+    item = view_model.itemFromIndex(idx)
+    file = item.text().split("\n")[0]
+    subprocess.call(["xdg-open", file])
+
+#
+# main
+#
+    
+list_height = 128
+view_height = 512
+
+app = QtWidgets.QApplication(sys.argv)
+MainWindow = QtWidgets.QMainWindow()
+ui = mainwindow.Ui_MainWindow()
+ui.setupUi(MainWindow)
+
+if len(sys.argv) == 1:
+    imglist = read_list(sys.stdin)
+elif len(sys.argv) == 2:
+    with open(sys.argv[1], "r") as f:
+        imglist = read_list(f)
+else:
+    print("only one input-file allowed", file=sys.stderr)
+    sys.exit(1)
+
+list_model = QStandardItemModel()
+fill_list(list_model, imglist, list_height)
+ui.imagelist.setModel(list_model)
+ui.imagelist.setIconSize(QSize(list_height, list_height))
+ui.imagelist.activated.connect(list_activated)
+
+view_model = ImageViewModel()
+ui.imageview.setModel(view_model)
+ui.imageview.setIconSize(QSize(view_height, view_height))
+ui.imageview.customContextMenuRequested.connect(view_contextmenu)
+ui.imageview.setDragEnabled(True)
+ui.imageview.clicked.connect(view_aktion)
+
+MainWindow.show()
+sys.exit(app.exec_())

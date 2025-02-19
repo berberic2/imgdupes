@@ -1,0 +1,2 @@
+# imgdupes
+FInd duplicate images
